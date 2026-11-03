@@ -1,111 +1,110 @@
 ---
 name: undp-carbon-registry
-description: Expert guide to the UNDP National Carbon Credit Registry v2.0 (Article 6 of the Paris Agreement). Use when working on, explaining, reviewing, debugging, deploying, or customizing this registry: its NestJS backend (national-api, analytics-api, replicator, async-operations-handler, data-importer), React/Vite frontend, dual ledger/operational database design, CASL roles, credit serial numbers, block splitting, ITMO platform sync, or Playwright E2E tests. Works in Claude Code (with the repo), Cowork, and chat (from knowledge only).
+description: Orchestrator for the UNDP National Carbon Credit Registry v2.0 (Article 6.2 of the Paris Agreement). Use for any task about this registry, in Claude Code, Cowork or chat: explaining its business rules (MO and ITMO blocks, Cooperative Approaches, Initial Reports, first transfers, Corresponding Adjustments, OMGE and SOP deductions), developing or debugging its NestJS backend or React frontend, CASL roles, ledger and replicator behaviour, serial numbers and block splits, AEF V2 reporting, CAD Trust V2 sync, the UNDP ITMO platform importer, Playwright E2E tests, deployment, or per-country customization. Do not use for general carbon market or Article 6 policy questions with no link to this codebase, or for citing papers and standards (research-analyst owns citation verification).
 ---
 
-# UNDP National Carbon Credit Registry
+# UNDP Carbon Registry Skill
 
-Open source toolkit for tracking, issuing, transferring and retiring carbon credits under Article 6. One NestJS codebase (`backend/services`) runs several logical services; a React/Vite app (`web`) is the frontend.
+This skill is an orchestrator. It decides which layer of the registry a request touches, loads only the reference file for that layer, and checks every claim against the real code before it reaches the answer. It adds four things a plain reading of the repo does not: a surface check (Code, Cowork or chat), a source of truth gate, fixed loading rules for the reference files, and two scripts for checks that must be exact (serial number arithmetic and backend/frontend enum drift).
 
-## How to use this skill by surface
+## Precedence with other skills and agents
 
-- **Claude Code (repo present):** verify every claim against the files before acting. Read files with explicit offset and limit. Run the commands below from the stated directory.
-- **Cowork (files or folder shared):** same as Code if the repo is attached; otherwise ask the user to share the relevant files rather than guessing paths or code.
-- **Chat (no repo):** answer from the architecture in this skill. Say clearly when something must be checked in the actual code, and give the file path where it lives.
+| Situation | Leading skill or agent | What this skill owns |
+|-|-|-|
+| Code change inside `backend/services` | `backend-engineer` agent if present, else this skill | Business rules (Step 4), checklist (Step 6) |
+| Code change inside `web/` | `frontend-engineer` agent if present, else this skill | CASL mirror and enum mirror checks |
+| Playwright suite, seed scripts, testing docs | `e2e-qa-engineer` agent if present, else this skill | Replicator lag rule, factory conventions |
+| Commit, lint, typecheck, migrations | repo commands `commit`, `lint-fix`, `typecheck`, `migration` | Nothing beyond Step 6 |
+| Answer cites Paris Agreement decisions, papers or standards with identifiers | research-analyst | Mapping the decision to registry behaviour |
+| General Article 6 policy, no registry link | other skills | Nothing, do not load this skill |
 
-## Commands
+## Surface check, read before Step 1
 
-Backend, from `backend/services/`:
+1. **Claude Code with the repo:** the repo is the source of truth. Find it by the presence of `backend/services/src/main.ts` and `web/src/Casl/ability.ts`. Run `python3 scripts/registry_probe.py ROOT` once per conversation; it reports modules, enum drift and which docs exist. Read files with explicit offset and limit.
+2. **Cowork:** if the folder is shared, treat it as Claude Code. If only some files are shared, ask for the specific file named in the reference before asserting anything about its contents.
+3. **Chat:** answer from the reference files. Mark any statement about current code as "per the v2.0 snapshot in this skill" and give the file path the user should check. Never invent a function, endpoint or field name that is not in the references.
+4. `scripts/serial_number.py` needs only Python, so it works in every surface that can run code. Where code cannot run, do the arithmetic by hand using the rule in `references/article6_lifecycle.md` and show the working.
 
-| Task | Command |
-|---|---|
-| Install | `yarn install --frozen-lockfile` |
-| Build | `yarn build` |
-| Dev (one module) | `yarn start:dev` with `RUN_MODULE` set |
-| Lint | `yarn lint` |
-| Unit tests | `yarn test` or `yarn test -- path/file.spec.ts --testNamePattern "name"` |
-| Coverage | `yarn test:cov` |
-| Jest e2e (not Playwright) | `yarn test:e2e` |
-| Migrations | `yarn migration:generate <path>`, `migration:create`, `migration:run`, `migration:revert`, `migration:show` (uses `src/data-source.ts`) |
-| Serverless offline | `yarn sls:install`, then `sls offline --stage=local` (Swagger at `http://localhost:3000/local/national`) |
+## Loading the reference files
 
-Frontend, from `web/`: `yarn dev` (port 3030), `yarn build` (`tsc -b && vite build`), `yarn lint`, `yarn preview`.
+Load by fixed rule, not by feel. Load only the file for the layer touched; load a second only when the task crosses layers.
 
-Full stack: `docker-compose up -d --build` (docs assume `podman-compose`). Services: `db`, `national` (`:3000/national`), `stats` (`:3100/stats`), `replicator`, `web` (`:3030`). Env from `.env.db`, `.env.national`, `.env.replicator` (see `.env.*.example`) and `backend/services/.env.example`. Emails are off by default (`IS_EMAIL_DISABLED=true`); generated passwords, including root, appear in the `national` logs under `Password (temporary)`.
+| File | Load when |
+|-|-|
+| `references/architecture.md` | Any backend change, any question about modules, ledger, replicator, file storage, location, async work |
+| `references/article6_lifecycle.md` | Any question or change touching credit blocks, statuses, transfers, retirements, authorization, Cooperative Approaches, Initial Reports, Corresponding Adjustments, OMGE or SOP |
+| `references/roles_permissions.md` | Any permission, role, onboarding or "who can do X" question; any CASL edit |
+| `references/integrations.md` | AEF V2 reports, CAD Trust V2 sync, ITMO platform importer, certifier scrape, annual report import, AEF rollover |
+| `references/testing.md` | Writing or fixing tests, flaky tests, seeding, manual QA |
+| `references/deploy_customize.md` | Running the stack, env vars, AWS or container deployment, branding, localization, country rollout, TOR questions |
 
-Demo data: `scripts/seed-demo.sh` (needs the stack, `python3`, `curl`). Reset steps: `docs/testing/manual-qa-article6.md`.
+Do not load all six for a single fact. A one line question ("what does SOP mean here") needs only its file.
 
-## Playwright E2E
+## Step 1: Classify the request
 
-Config `playwright.config.ts` at repo root runs `tests/e2e/article6/**/*.spec.ts`. There is no root `package.json`: install `@playwright/test` ad hoc, then `npx playwright test`. Tests need the live stack. Seed helpers in `tests/e2e/article6/support/factories.ts` call `podman exec db psql` (override with `E2E_DB_CONTAINER`), so run under podman. Coverage and known gaps: `docs/testing/e2e-coverage.md`.
+| Mode | Signal | What runs |
+|-|-|-|
+| Explain | "how does", "why can't", "what is", business flow, onboarding | Step 4, answer in business terms first, code paths second |
+| Develop | add, change, implement, migrate | Steps 2 to 6 |
+| Debug | error, wrong value, missing record, flaky | Step 5 first, then Steps 2 to 6 |
+| Integrate or report | AEF, CAD Trust, ITMO, export | `integrations.md`, then Step 4 |
+| Operate | run, deploy, configure, customize, translate | `deploy_customize.md` |
 
-## Architecture
+Ask one clarifying question only when the mode changes which layer is touched.
 
-### Modules selected by `RUN_MODULE` (comma separated, default `national-api`)
+## Step 2: Source of truth gate
 
-- `national-api`: `/national`; auth, users, companies, project and credit lifecycle. Controllers in `src/national-api/*.controller.ts`.
-- `analytics-api`: `/stats`; read only statistics.
-- `replicator`: streams ledger events into the operational DB (`ledger-replicator/process.event.service.ts`).
-- `async-operations-handler`: queued work such as email; `ASYNC_OPERATIONS_TYPE=Database|Queue`.
-- `data-importer`: external imports such as ITMO sync; `DATA_IMPORT_TYPES`.
+Before stating or relying on any rule, confirm where it lives. Order of authority:
 
-`docker-compose.yml` runs each as its own container from one image; `serverless.yml` packages them as Lambda functions.
+1. Code (`libs/shared/src/**`, controllers, `web/src/**`)
+2. Repo business docs (`docs/business/*.md`)
+3. Testing docs (`docs/testing/*.md`)
+4. `README.md`, `CHANGES.md`, `CLAUDE.md`
+5. This skill's references
 
-Shared code: `@app/shared` (`libs/shared/src/`, nearly all domain logic, one folder per concern plus `entities/`, `view-entities/`, `dto/`, `enum/`, `ledger-db/`) and `@app/core` (`libs/core/src/app-config/`).
+If a lower source disagrees with a higher one, the higher one wins and the answer says so. Known example: the business doc speaks of "single year" and "multi year" Corresponding Adjustment methods, while the enum `ca.method.enum.ts` holds `Trajectory`, `Averaging`, `MultiYear`. Report the enum values when talking about code.
 
-### Dual database
+## Step 3: Locate the layer
 
-- **Ledger DB** (system of record) behind `ledger-db/ledger.db.interface.ts`: `pgsql-ledger.service.ts` (default) or `qldb-ledger.service.ts`; `LEDGER_TYPE=PGSQL|QLDB`. A new backend implements this interface.
-- **Operational DB** (Postgres read side), filled asynchronously by the replicator and enriched (for example geolocation). Analytics and most list endpoints read it through `view-entities/`.
-- Reads lag writes. A freshly written entity may not appear yet; E2E tests poll or seed the operational DB directly. Check the replicator is running before calling a missing record a bug.
+Use the layer map in `references/architecture.md`. Find the bounded concern folder in `libs/shared/src/` before touching any controller; controllers in `src/national-api/` are thin.
 
-### Credit identity
+## Step 4: Apply the business rules
 
-Project ID per project; each issuance gets a serial range aligned with UNFCCC Decision 6/CMA.4 paragraph 17, for example `CA0004-VU-CH-356-1-3000-2023`. A partial transfer or retirement splits the block: the original owner keeps the low end, the counterparty gets a new block for the high end. See `serial-number-management/` and `credit-blocks-management/`.
+Every change or explanation touching credits must respect the invariants in `references/article6_lifecycle.md`. The short list, which must never be broken:
 
-### Pluggable services (env selected, interface backed)
+- An MO can only go international after ITMO Authorization under an Active Cooperative Approach.
+- A Cooperative Approach becomes Active only after its Initial Report is submitted.
+- First Transfer Towards NDC needs purpose NDC; First Transfer For OIMP needs purpose OIMP or Other and a named Authorized Entity. They are mutually exclusive.
+- Use Towards NDC is MO only. Voluntary and OMGE Cancellation are open to MO and ITMO of any purpose.
+- Approval of a first transfer is the event that creates the Corresponding Adjustment obligation.
+- Partial splits: the current owner keeps the low end of the serial range.
 
-- `LOCATION_SERVICE=FILE|OPENSTREET|MAPBOX`: `location/location.interface.ts`
-- `FILE_SERVICE=LOCAL|S3|AZURE`: `file-handler/filehandler.interface.ts`. Uploads store a bare key (`documents/foo.pdf`); `file-url.interceptor.ts` turns keys into URLs on HTTP responses via `getUrl()`. Server side consumers (email attachments, PDFs, exports) must call `resolveStoredFile()`. Anything taking a reference back from a client must call `toStorageKey()`. Existing absolute URLs pass through unchanged.
-- `ASYNC_OPERATIONS_TYPE=Database|Queue`
+## Step 5: Debug protocol
 
-Rule: add optional features as a new interface implementation selected by env var, never as a hard coded branch in an existing service.
+1. Read side missing or stale: check the `replicator` is running and caught up before calling it a bug. Reads come from the operational DB, writes go to the ledger.
+2. File link broken: check whether the value is a bare storage key or an absolute URL, and whether a server side path skipped `resolveStoredFile()`.
+3. Permission denied unexpectedly: compare `casl-ability.factory.ts` with `web/src/Casl/ability.ts`; drift is the usual cause.
+4. Dropdown or status mismatch between UI and API: run `scripts/registry_probe.py ROOT --drift`. Some drift is intentional (the frontend company role list is a wider UI vocabulary); a missing status value such as `Revoked` in the frontend Cooperative Approach enum is a real gap. Judge each row, do not auto fix.
+5. Serial range looks wrong after a transfer: recompute with `scripts/serial_number.py split`.
+6. E2E flake: see `references/testing.md`, replicator lag section, before touching the test.
 
-### Authorization
+## Step 6: Finish checklist (Develop and Debug)
 
-CASL on both sides, kept in sync by hand:
-- Backend: `casl/casl-ability.factory.ts`, roles in `role.enum.ts` (Root, DNA, Project Developer, Independent Certifier; each Admin, Manager or ViewOnly), enforced by `policy.guard.ts` and `@Policy()`.
-- Frontend: `web/src/Casl/ability.ts` and `Can.ts`.
-- JWT auth in `libs/shared/src/auth/`, plus an API key strategy for MRV system integration.
+1. Entity change: entity, DTO, view entity, migration (`yarn migration:generate`).
+2. Permission change: backend factory and frontend ability edited together.
+3. Enum change: backend `libs/shared/src/enum/` and `web/src/Definitions/Enums/` kept parallel; rerun drift check.
+4. New optional backend: new interface implementation selected by env var, never a hard coded branch.
+5. File references: `toStorageKey()` inbound, `resolveStoredFile()` for server side output.
+6. Run `yarn lint`, `yarn build`, relevant `yarn test` in each touched package; for Article 6 flows, the matching Playwright spec.
+7. Update `docs/testing/e2e-coverage.md` if test coverage changed, and the business doc if a rule changed.
 
-When changing a permission, update both files and say so.
+## Script self checks
 
-### Frontend (`web/src`)
+After editing a script run `python3 scripts/serial_number.py --selftest` (11 checks: parse, split, next batch, OMGE and SOP rounding, bad input). `registry_probe.py` is read only and exits 1 outside a registry checkout.
 
-`Config/apiConfig.ts` (endpoints), `Config/uiRoutingConfig.ts` (routes), `Config/colorConfigs.ts` (branding); `Definitions/Enums` (mirrors backend `enum/`); `Context/` (user, settings, connection); `Pages/` (one folder per feature, mirroring backend modules); `locales/` and `public/locales/` (i18next; English complete, French and Spanish partial).
+## Error handling
 
-## Country customization (override, do not fork)
-
-| Area | Location |
-|---|---|
-| Branding and config | `web/src/Config/`, `web/src/Styles/`, `web/public/` |
-| Frontend vocabularies | `web/src/Definitions/Enums/` |
-| Backend enums and constants | `libs/shared/src/enum/`, `constants/` |
-| API contracts | `libs/shared/src/dto/` |
-| Reference data | `backend/services/countries.json`, `regions.csv`, `organisations.csv`, `users.csv` |
-| Backend selection | `RUN_MODULE`, `LEDGER_TYPE`, `LOCATION_SERVICE`, `FILE_SERVICE`, `ASYNC_OPERATIONS_TYPE` |
-| Translations | `web/public/locales/` |
-
-## ITMO platform integration
-
-`data-importer` pulls authorized projects daily from UNDP's ITMO Voluntary Bilateral Cooperation Platform and pushes issuances. Field and sector mappings are in the root `README.md` under "External Connectivity"; read them before editing `data-importer/importers/`.
-
-## Working checklist
-
-1. Locate the bounded concern in `libs/shared/src/` before touching a controller.
-2. Entity change: update entity, DTO, view entity, then generate a migration.
-3. Permission change: edit backend factory and frontend ability together.
-4. Enum change: keep backend `enum/` and `web/src/Definitions/Enums` parallel.
-5. Read side bug: rule out replicator lag first.
-6. File references: `toStorageKey()` inbound, `resolveStoredFile()` for server side output.
-7. Before finishing: `yarn lint`, `yarn build`, relevant `yarn test` in each touched package.
+- Reference says one thing, code another: trust code, tell the user, suggest updating the reference.
+- File named in a reference is missing: say so, search for its new location by concern name, never guess its contents.
+- Script cannot run: do the check by hand and label it "manual".
+- Unsure whether a rule is business policy or implementation detail: say which source it came from.
